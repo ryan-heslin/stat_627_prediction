@@ -1,0 +1,149 @@
+---
+title: "`r params$title`"
+author: "Ryan Heslin"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+header-includes:
+  - \setlength{\parindent}{2em}
+  - \setlength{\parskip}{2em}
+params:
+    title: "Chocolate Exploratory Data Analysis"
+output:
+  pdf_document:
+    highlight: "kate"
+    df_print: "kable"
+    includes:
+      in_header: "notes_text_preamble.tex"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  comment = "",
+  fig.pos = "",
+  message = FALSE,
+  tidy = "styler",
+  warning = FALSE,
+  fig.align = "center",
+  highlight = TRUE
+)
+```
+
+
+The data for this project come from week 3 of 
+2022 Tidy Tuesday, available [here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2022/2022-01-18/readme.md). They consist of ratings for 
+`nrow(chocolate)` chocolate bars. Useful features include country of origin, manufacturing company, 
+ingredients, and words used by taste-testers to describe each bar. (How do I get that job?) I have preprocessed the data by extracting these descriptive words into columns and creating a dummy column for each ingredient.
+
+```{r}
+library(tidyverse)
+source(here::here("R", "utils.R"))
+
+chocolate <- readRDS(here::here("data", "chocolate.Rds"))
+```
+
+## The Response 
+
+
+Chocolate bar quality is rated on a scale from 1 to 4 
+inclusive, with increments of 0.25. The mean is 
+`r mean(chocolate[["rating"]])`. I will have to 
+round predictions to that scale, and I may have to 
+create a custom loss function to accommodate it.
+```{r}
+vec2DF(table(chocolate[["rating"]]))
+```
+
+The cumulative distribution
+```{r}
+ggplot(chocolate, aes(x = rating)) +
+  stat_ecdf(geom = "step", fill = "blue", alpha = .5) +
+  labs(y = "Cumulative Proportion")
+```
+
+```{r}
+
+```
+The vast majority of companies are American, which 
+may reflect bias in the data. 
+
+The cacao beans used to make the chocolate bars come from just six countries.
+```{r}
+table_head(chocolate[["company_location"]])
+
+table_head(chocolate[["country_of_bean_origin"]]) |>
+  vec2DF()
+```
+
+# Flavor Description
+
+I created five dummy columns to hold each word or phrase used to describe each bar. I drop the fifth because only one bar had that many terms
+
+Most of the words seem to describe bar ingredients 
+("oily", "sweet", etc.); fewer convey direct sentiments. They may still be useful as predictors 
+if the testers consistently preferred some 
+combinations of ingredients to others.
+
+The worst-rated bars have some amusing words.
+```{r}
+chocolate <- select(chocolate, -characteristic5)
+
+filter(chocolate, rating == 4) |>
+  select(starts_with("characteristic")) |>
+  head()
+
+filter(chocolate, rating == 1) |>
+  select(starts_with("characteristic"))
+```
+
+```{r}
+all_words <- select(chocolate, starts_with("characteristic")) |>
+  unlist() |>
+  na.omit()
+
+length(all_words)
+library(tidytext)
+get_sentiments("bing")
+
+sum(all_words %in% (get_sentiments("bing")$word))
+```
+
+
+Of the `r all_words` total words recorded, only 
+a fraction appear in a sentiment lexicon, though 
+that's not too bad. Many are repeated, with only 
+`r n_distinct(all_words)` distinct values.
+
+
+The most common are generic flavor descriptors. 
+
+```{r}
+table_head(all_words, .n = 10) |>
+  vec2DF()
+ingredient_words <- names(table_head(all_words, .n = 10))
+```
+
+
+As we'd expect, almost all chocolate bars have 
+cacao and sugar. The other ingredients are much 
+rarer.
+```{r}
+chocolate |>
+  select(beans:last_col()) |>
+  colMeans() |>
+  vec2DF() |>
+  pivot_longer(everything(),
+    names_to = "Ingredient",
+    values_to = "Proportion With"
+  ) |>
+  mutate(Ingredient = factor(Ingredient, levels = unique(Ingredient)[order(`Proportion With`)])) |>
+  ggplot(aes(y = Ingredient, x = `Proportion With`, fill = Ingredient)) +
+  geom_col() +
+  scale_x_continuous(labels = scales::percent) +
+  labs(title = "Proportion of Chocolate Bars with Recorded Ingredients") +
+  theme(legend.position = "none")
+```
+
+# Conclusion 
+
+`country_of_bean_origin` and `company_location` would be useful features as is. It will take more work to wring usable data out of ingredients and text. Text could be transformed into sentiments, but that would not be useful for words describing 
+flavors or ingredients.
