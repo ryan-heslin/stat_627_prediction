@@ -1,0 +1,13 @@
+model,.metric,.estimator,.estimate
+linear,mae,standard,0.30796618898897893
+linear,rmse,standard,0.39706244214643727
+linear,interval_error,standard,1.221169036334913
+linear,rsq,standard,0.21769203353511302
+rf,mae,standard,0.3134229831762072
+rf,rmse,standard,0.40216904572692924
+rf,interval_error,standard,1.2527646129541865
+rf,rsq,standard,0.20922092532056039
+boost,mae,standard,0.5831446854800786
+boost,rmse,standard,0.6752469121865605
+boost,interval_error,standard,2.3270142180094786
+boost,rsq,standard,0.2039639773487836

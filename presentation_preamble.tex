@@ -1,0 +1,17 @@
+  \author[R. Heslin]{Ryan Heslin}
+  \setbeamercolor{footline}{bg=blue}
+  \setbeamertemplate{navigation symbols}{}
+  % Largely copied from https://tex.stackexchange.com/questions/237258/section-name-with-fancyhdr-in-beamer
+  \setbeamertemplate{footline}{
+    \leavevmode%
+    \hbox{%
+        \begin{beamercolorbox}[wd=\paperwidth,ht=3ex,dp=1.125ex, center]{section in head/foot}%
+            \usebeamerfont{section in head/foot} \insertauthor{} | American University | \today{} | \insertframenumber{}  of \inserttotalframenumber{}
+    \end{beamercolorbox}%
+     \begin{beamercolorbox}[wd=.5\paperwidth,ht=2.25ex,dp=1ex,right]{section in head/foot}%
+       %\usebeamerfont{section in head/foot} \insertsection\hspace*{1cm}
+     \end{beamercolorbox}}%
+    \vskip0pt%
+  }
+  \setbeamertemplate{headline}{}
+  \setbeamertemplate{frametitle}[default]{}

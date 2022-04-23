@@ -11,6 +11,9 @@ output:
   pdf_document:
     highlight: "kate"
     df_print: "kable"
+    includes:
+      in_header: "../notes_text_preamble.tex"
+urlcolor: "blue"
 ---
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -34,41 +37,45 @@ company and country of origin, cocoa percentage, and words used by testers to de
 
 The data come from a recent Tidy Tuesday and can be found [here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2022/2022-01-18/readme.md).
 
-Available features are:
+Available features include:
 
+*  `company_manufacturer`: Chocolate manufacturer
+*  `company_location`: Country of chocolate manufacturer.
+*  `country_of_bean_origin`: Country of cacao bean used in chocolate.
+*  `rating`: Taste-tester's rating of the chocolate bar, on a scale of 1 to 4 in increments of 0.25. The response.
+*  `ingredients`: Character vectors with abbreviations for the presence of six ingredients: cacao beans, cocoa butter, lecithin, sugar, salt, nonsugar sweetener, and vanilla. I transformed these into dummy columns.
+*  `characteristic`: Words and phrases used by taste-testers to describe the chocolate. I split this into five columns, one for each word.
+*  `review_date`: Year of review.
+*  `cocoa_percent`: Percentage of chocolate that is cocoa
 
+# Assumptions 
 
+From exploration, most of the characteristics seem to be descriptions of flavor (e.g., "sweet", "nutty"). If some of these flavors are more popular among taste-testers than others, they may be useful as a categorical variable. 
+Company location and bean origin could prove useful by similar logic. If there was yearly turnover 
+among the taste-testers, year might be worthwhile as well. There might also be a linear relationship 
+between cocoa percentage and rating.
+
+# Preprocessing
 
 As a first pass, I fit a simple linear regression predicting ratings. I don't expect it to do well, but it will provide a useful baseline.
 I create a "sentiment" feature by using `sentimentr`
 to compute sentiment for each phrase used to describe each chocolate, then summing the 
 total for each chocolate bar. Positive values 
-mean higher sentiment. I don't simply compute 
+mean more positive sentiment. I don't simply compute 
 sentiments for individual words because that 
 would miscode negations (e.g., "not good").
 
-
 It might have been better to extract this complex transformation to a function instead of jamming it into a recipe.
-
 
 I also define my own recipe step, following the 
 tutorial [here](https://www.tidymodels.org/learn/develop/recipes/). It takes a number of character vectors and returns dummy columns representing whether each of the $n$ most 
-common elements across all the columns is present in each row. 
+common elements across all the columns is present in each row. This is a useful way of encoding the presence or absence of terms.
 ```{r}
 suppressMessages(library(tidymodels))
 library(tidyverse)
 source(here::here("R", "utils.R"))
 set.seed(12345)
-```
-
-I noted that words used to describe chocolate bars 
-were often ingredients or descriptions of taste. 
-These might be useful categorical features.
-```{r}
-select(train, starts_with("characteristic")) |>
-  unlist(use.names = FALSE) |>
-  table_head(.n = 6) |>
-  vec2DF()
+theme_set(theme_minimal())
 ```
 
 ```{r}
@@ -77,6 +84,17 @@ chocolate_raw[["sentiment"]] <- NA
 chocolate <- initial_split(chocolate_raw)
 train <- training(chocolate)
 test <- testing(chocolate)
+``` 
+
+These terms, as I noted earlier, are mostly flavor descriptors.
+```{r}
+select(train, starts_with("characteristic")) |>
+  unlist(use.names = FALSE) |>
+  table_head(.n = 6) |>
+  vec2DF()
+```
+
+```{r}
 lin_spec <- linear_reg()
 lin_rec <- recipe(train,
   formula = rating ~ .,
@@ -96,18 +114,22 @@ lin_rec <- recipe(train,
   step_dummy(c(all_nominal_predictors())) |>
   step_novel(all_nominal_predictors()) |>
   update_role(rating, new_role = "outcome") |>
-  update_role(company_location, country_of_bean_origin, review_date, cocoa_percent, cocoa_butter, beans, lecithin, sugar, salt, nonsugar_sweetener, vanilla, sentiment, new_role = "predictor") |>
+  update_role(company_location, country_of_bean_origin, review_date,
+    cocoa_percent, cocoa_butter, beans, lecithin, sugar, salt,
+    nonsugar_sweetener, vanilla, sentiment,
+    new_role = "predictor"
+  ) |>
   update_role(ref, company_manufacturer, ingredients, specific_bean_origin_or_bar_name,
     starts_with("characteristic"),
     new_role = "id"
   )
 
-
 lin_wflow <- workflow(lin_rec, lin_spec)
 ```
 
+# Customizing Prediction
 I define a function (in `utils.R`) to round model predictions to the nearest increment on the scale. This violates 
-the OLS assumptions, but this model is only intended as a reference. I use this function to develop a custom metric, `interval_error`, that measures 
+the OLS assumptions, but this model is only intended as a reference. I use this function to develop a custom metric, `average_interval_error`, that measures 
 each raw prediction's deviation from the true rating, rounded to the nearest increment, in units of the increment (0.25). For example, 
 a prediction of 3.27 and a true rating of 2.5 calibrate to an interval error of 3 because 
 $|2.5-3.27|$ rounded to the nearest fourth and multiplied by 4 (the inverse of the increment) is 3. Estimates below the scale's minimum are rounded up to it, and those above the maximum are rounded down to it. Stated mathematically, the average interval error is:
@@ -115,20 +137,25 @@ $|2.5-3.27|$ rounded to the nearest fourth and multiplied by 4 (the inverse of t
 \[
    \text{AIE} = \frac{1}{n} \sum_{i=1}^n \min \left \{ \max \left [ \left |\frac{1}{\text{interval}}\left (y_i - \left \lfloor \hat y_i + \frac{1}{2} \right \rfloor \right ) \right |, \min(y) \right ], \max(y) \right \}
 \]
-where $\lfloor \, \rfloor$ designates the floor function.
+where $\lfloor x \rfloor = \text{floor}(x)$.
 (See [here](https://math.stackexchange.com/questions/681252/notation-for-rounding-in-equation) for an explanation of the formula).
 
 Using this approach, mean absolute error is below one and a half increments - better than I expected. RMSE is somewhat higher, suggesting some errors are disproportionately large. 
-The average absolute error is equal to about 1.3 intervals.
+The average absolute error is less than 2 intervals.
 ```{r}
-chocolate_metrics <- metric_set(mae, rmse, interval_error)
-baked <- prep(lin_rec) |>
-  bake(train)
+chocolate_metrics <- metric_set(mae, rmse, interval_error, rsq)
 lin_model <- fit(lin_wflow, train)
 tidy(lin_model)
 lin_preds <- augment(lin_model, new_data = train)
 lin_preds[[".pred"]] <- fit_to_scale(lin_preds[[".pred"]], min = 1, max = 4, increment = .25)
 chocolate_metrics(lin_preds, truth = rating, estimate = .pred)
+```
+
+Some of the flavor dummies appear to be important. 
+According to the model, bars described as "sweet" are rated about 1.5 increments less than otherwise identical bars that are not "sweet", all else held constant.
+```{r}
+tidy(lin_model) |>
+  arrange(-abs(estimate))
 ```
 
 It seems the biggest errors are for the very worst 
@@ -140,15 +167,17 @@ arrange(lin_preds, -abs(.pred - rating)) |>
   select(company_manufacturer, specific_bean_origin_or_bar_name, .pred, rating)
 ```
 
-
 Next, I try a random forest, reasoning that the relatively large number of predictors and likelihood 
-of nonlinear associations suit it well for these data.
+of nonlinear associations suit it well for these data. 
 ```{r}
 baked <- prep(lin_rec) |> bake(train)
 combined <-
   left_join(baked, select(
     train,
-    all_of(setdiff(union(colnames(train), lin_rec[[c("var_info", "variable")]]), colnames(baked))), ref
+    all_of(setdiff(union(
+      colnames(train),
+      lin_rec[[c("var_info", "variable")]]
+    ), colnames(baked))), ref
   ),
   by = "ref"
   )
@@ -160,10 +189,14 @@ rf_spec <- rand_forest(mtry = tune(), trees = 400, min_n = tune()) |>
 rf_wf <- workflow(lin_rec, rf_spec)
 ```
 
-I use 20-fold cross validation to select the `mtry` and `min_n` parameters.
-```{r}
+I use 20-fold cross validation to select the `mtry` and `min_n` parameters, using `average_interval_error` to select tuned values.
+```{r, cache = TRUE }
+suppressMessages(library(tidymodels))
 mtry_start <- floor(nrow(tidy(lin_model)) / 3)
-tuning_grid <- grid_regular(mtry(range = c(mtry_start - 2, mtry_start + 4)), min_n(range = c(5, 40)))
+tuning_grid <- grid_regular(
+  mtry(range = c(mtry_start - 2, mtry_start + 4)),
+  min_n(range = c(5, 40))
+)
 tune_res <- tune_grid(rf_wf,
   grid = tuning_grid, resamples = folds,
   metrics = metric_set(interval_error)
@@ -188,14 +221,18 @@ followed by some of the ingredient dummies.
 The country of origin dummies don't seem that 
 important.
 ```{r}
-rf_model |>
+importance_bar <- rf_model |>
   extract_fit_engine() |>
-  importance() |>
+  ranger::importance() |>
   enframe(name = "variable", value = "importance") |>
-  mutate(variable = factor(variable, levels = variable[order(importance, decreasing = TRUE)])) |>
+  mutate(variable = factor(variable,
+    levels = variable[order(importance, decreasing = TRUE)]
+  )) |>
   ggplot(aes(x = variable, y = importance)) +
   geom_col(aes(fill = variable), show.legend = FALSE) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+importance_bar
+ggsave(here::here("outputs", "importance_bar.png"), importance_bar)
 ```
 
 I'm concerned about overfitting, so I also try boosting, which is less prone to overfitting.
@@ -207,15 +244,18 @@ boost_spec <- boost_tree(
 )
 ```
 
-
-```{r}
+```{r, cache = TRUE}
+suppressMessages(library(tidymodels))
 boost_wf <- workflow(lin_rec, boost_spec)
 tuning_grid <- grid_regular(
   mtry(range = c(mtry_start - 2, mtry_start + 4)),
   learn_rate(),
   min_n()
 )
-tune_res <- tune_grid(boost_wf, grid = tuning_grid, resamples = folds, metrics = metric_set(interval_error))
+tune_res <- tune_grid(boost_wf,
+  grid = tuning_grid,
+  resamples = folds, metrics = metric_set(interval_error)
+)
 boost_wf <- finalize_workflow(boost_wf, select_best(tune_res, "interval_error"))
 boost_model <- fit(boost_wf, data = train)
 boost_model
@@ -241,9 +281,9 @@ overall <- tibble(
 fitted_actual_plot(overall, -actual)
 ```
 
-# Evaluation
+# Evaluation and Results
 
-Now, to predict on the test set. The boosted model 
+Now I predict on the test set. The boosted model 
 does as terribly as before. Linear regression performs about the same as the random forest. 
 The random forest's better performance on the 
 training set was probably a result of overfitting.
@@ -252,12 +292,14 @@ lin_test <- test_preds(lin_model, test)
 rf_test <- test_preds(rf_model, test)
 boost_test <- test_preds(boost_model, test)
 
-bind_rows(
+results <- bind_rows(
   linear = chocolate_metrics(lin_test, estimate = .pred, truth = rating),
   rf = chocolate_metrics(rf_test, estimate = .pred, truth = rating),
   boost = chocolate_metrics(boost_test, estimate = .pred, truth = rating),
   .id = "model"
 )
+results
+write_csv(results, here::here("outputs", "results.csv"))
 ```
 
 The same patterns appear when plotting the test predictions. The boosted model seems to be biased low. The random forest predicts in a wider range than the linear model, but has 
@@ -270,7 +312,9 @@ test_overall <- tibble(
   rf = rf_test[[".pred"]], boosted = boost_test[[".pred"]],
   ref = test[["ref"]]
 )
-fitted_actual_plot(overall, -actual)
+fitted_actual <- fitted_actual_plot(overall, -actual)
+fitted_actual
+ggsave(here::here("outputs", "fitted-actual.png"), fitted_actual)
 ```
 
 Again, the low-rated bars confounded the models the most.
@@ -281,13 +325,51 @@ left_join(test_overall, test, by = "ref") |>
   head()
 ```
 
-# Assessment 
+Most of the estimated coefficients from the linear 
+model are not 
+significant at $\alpha = .05$ after applying the 
+Bonferroni correction. Some standard errors are 
+large, likely due to there being few observations 
+with that factor level.
+```{r}
+tidied <- tidy(lin_model) |>
+  filter(term != "(Intercept)") |>
+  mutate(
+    term = factor(term, levels = term),
+    Significance = factor(c(
+      "Significant",
+      "Not Significant"
+    )[as.integer(p.adjust(p.value,
+      method = "bonferroni"
+    ) > .05) + 1], levels = c("Significant", "Not Significant"))
+  )
 
-I enjoyed working on this project. I think I used an effective EDA strategy that identified ways the 
+width <- qt(1 - .025, df = nrow(train) - nrow(tidied))
+
+coef_point <- ggplot(tidied, aes(x = estimate, color = Significance)) +
+  geom_point(aes(y = term)) +
+  geom_segment(aes(
+    yend = seq_len(nrow(tidied)),
+    y = seq_len(nrow(tidied)), xend = estimate - width * std.error, x = estimate + width * std.error
+  )) +
+  scale_color_viridis_d() +
+  theme(legend.position = "bottom")
+coef_point
+ggsave(here::here("outputs", "coef_point.png"), coef_point)
+```
+
+# Conclusion 
+The presence or absence of flavors identified by 
+taste-testers, as well as the overall text sentiment 
+of their descriptions, had a substantial relationship with chocolate bar ratings. 
+As expected, positive sentiment was associated with higher ratings.
+Some other features, such as country of bean origin, were marginally useful, though not all categories 
+proved important in either linear regression or the random forest model. It is hard to tell from these observations exactly how 
+these factors influence chocolate ratings, but 
 ingredient and characteristic variables could be 
 used. Constructing features based on sentiment took some work, but was well worth doing. I also took the opportunity to delve into the 
 `tidymodels` interface by defining a custom metric and recipe step. I probably could have gotten 
-by using built-in tools, but I enjoyed customizing them. 
+by using the built-in tools, but I enjoyed customizing them. 
 
 I think I caused myself problems by storing the 
 words used to describe each chocolate bar in 
@@ -295,6 +377,17 @@ five atomic vector columns. A single list column
 would have made more conceptual sense and required less work to transform for analysis. I 
 also could have done more to fine-tune the random 
 forest model, or perhaps experimented with 
-KNN after using the lasso or PCA to reduce the 
-number of variables. 
+KNN after using the lasso, or PCA to reduce the 
+number of variables. Another unexplored option would have been further condensing the levels of categorical variables, since many of these features did not prove very useful. Still, I think my final models were reasonably successful.
 
+After completing modeling, I read [Julia Silge's](https://juliasilge.com/blog/chocolate-ratings/) report 
+on predicting with these data. She tokenized words from the text descriptions, computed tf-idfs, and 
+used them as features in a support vector machine model, which I did not think of trying, and 
+obtained good results, beating my test RMSE.
+
+# References 
+Create your own recipe step function. (n.d.). Retrieved April 23, 2022, from https://www.tidymodels.org/learn/develop/recipes/
+
+Custom performance metrics. (n.d.). Retrieved April 23, 2022, from https://www.tidymodels.org/learn/develop/metrics/
+
+Text predictors for #TidyTuesday chocolate ratings. (n.d.). Julia Silge. Retrieved April 23, 2022, from https://juliasilge.com/blog/chocolate-ratings/

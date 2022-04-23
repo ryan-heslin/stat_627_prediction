@@ -12,7 +12,8 @@ output:
     highlight: "kate"
     df_print: "kable"
     includes:
-      in_header: "notes_text_preamble.tex"
+      in_header: "../notes_text_preamble.tex"
+url_color: "blue"
 ---
 
 ```{r setup, include=FALSE}
@@ -28,18 +29,21 @@ knitr::opts_chunk$set(
 )
 ```
 
+# Introduction
 
-The data for this project come from week 3 of 
-2022 Tidy Tuesday, available [here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2022/2022-01-18/readme.md). They consist of ratings for 
-`nrow(chocolate)` chocolate bars. Useful features include country of origin, manufacturing company, 
-ingredients, and words used by taste-testers to describe each bar. (How do I get that job?) I have preprocessed the data by extracting these descriptive words into columns and creating a dummy column for each ingredient.
 
 ```{r}
 library(tidyverse)
 source(here::here("R", "utils.R"))
 
 chocolate <- readRDS(here::here("data", "chocolate.Rds"))
+theme_set(theme_minimal())
 ```
+
+The data for this project come from week 3 of 
+2022 Tidy Tuesday, available [here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2022/2022-01-18/readme.md). They consist of ratings for 
+`nrow(chocolate)` chocolate bars. Useful features include country of origin, manufacturing company, 
+ingredients, and words used by taste-testers to describe each bar. (How do I get that job?) I have preprocessed the data by extracting these descriptive words into columns and creating a dummy column for each ingredient.
 
 ## The Response 
 
@@ -50,19 +54,19 @@ inclusive, with increments of 0.25. The mean is
 round predictions to that scale, and I may have to 
 create a custom loss function to accommodate it.
 ```{r}
-vec2DF(table(chocolate[["rating"]]))
+ratings <- vec2DF(table(chocolate[["rating"]]))
+ratings
+write_csv(ratings, here::here("outputs", "ratings.csv"))
 ```
 
-The cumulative distribution
+The empirical cumulative distribution of ratings.
 ```{r}
 ggplot(chocolate, aes(x = rating)) +
-  stat_ecdf(geom = "step", fill = "blue", alpha = .5) +
+  stat_ecdf(geom = "step", color = "blue", alpha = .5) +
   labs(y = "Cumulative Proportion")
 ```
 
-```{r}
-
-```
+# Countries of Origin
 The vast majority of companies are American, which 
 may reflect bias in the data. 
 
@@ -76,9 +80,9 @@ table_head(chocolate[["country_of_bean_origin"]]) |>
 
 # Flavor Description
 
-I created five dummy columns to hold each word or phrase used to describe each bar. I drop the fifth because only one bar had that many terms
+I created five dummy columns to hold each word or phrase used to describe each bar. Many bars had fewer terms, so I filled the columns with `NA`.
 
-Most of the words seem to describe bar ingredients 
+Most of the words seem to describe bar flavors 
 ("oily", "sweet", etc.); fewer convey direct sentiments. They may still be useful as predictors 
 if the testers consistently preferred some 
 combinations of ingredients to others.
@@ -107,27 +111,29 @@ get_sentiments("bing")
 sum(all_words %in% (get_sentiments("bing")$word))
 ```
 
-
-Of the `r all_words` total words recorded, only 
-a fraction appear in a sentiment lexicon, though 
+Of the `r length(all_words)` total words recorded, only 
+a fraction appear in the Bing sentiment lexicon, though 
 that's not too bad. Many are repeated, with only 
 `r n_distinct(all_words)` distinct values.
 
 
 The most common are generic flavor descriptors. 
-
 ```{r}
-table_head(all_words, .n = 10) |>
+ingredients <- table_head(all_words, .n = 8) |>
   vec2DF()
+ingredients
 ingredient_words <- names(table_head(all_words, .n = 10))
+
+write_csv(ingredients, here::here("outputs", "ingredients.csv"))
 ```
 
+# Ingredients 
 
 As we'd expect, almost all chocolate bars have 
 cacao and sugar. The other ingredients are much 
 rarer.
 ```{r}
-chocolate |>
+ingredients_bar <- chocolate |>
   select(beans:last_col()) |>
   colMeans() |>
   vec2DF() |>
@@ -141,9 +147,20 @@ chocolate |>
   scale_x_continuous(labels = scales::percent) +
   labs(title = "Proportion of Chocolate Bars with Recorded Ingredients") +
   theme(legend.position = "none")
+ingredients_bar
+ggsave(here::here("outputs", "ingredients-bar.png"), ingredients_bar)
+```
+
+# Cocoa Percentage
+
+There doesn't seem to be a linear relationship between cocoa percentage and ratings.
+```{r}
+ggplot(chocolate, aes(x = cocoa_percent, y = rating)) +
+  geom_point() +
+  geom_smooth(se = FALSE)
 ```
 
 # Conclusion 
 
-`country_of_bean_origin` and `company_location` would be useful features as is. It will take more work to wring usable data out of ingredients and text. Text could be transformed into sentiments, but that would not be useful for words describing 
+`country_of_bean_origin` and `company_location` would be useful features as is. It will take more work to wring usable data out of ingredients and flavor terms. Text could be transformed into sentiments, but that would not be useful for words describing 
 flavors or ingredients.
